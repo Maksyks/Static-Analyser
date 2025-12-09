@@ -1,0 +1,49 @@
+<!doctype html>
+<meta charset="utf-8">
+<style>
+  html,body{margin:0;height:100%;background:#1e1e1e;color:#ddd}
+  #graph{width:100%;height:100%}
+  g.node{transition:filter .15s}
+  g.node.active{filter:drop-shadow(0 0 6px #fff)}
+</style>
+<div id="graph"></div>
+
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+<script src="viz.js"></script>
+<script src="svg-pan-zoom.min.js"></script>
+<script>
+let bridge=null, pan=null;
+
+let vizPromise = null;
+function getViz() {
+  if (!vizPromise) vizPromise = Viz.instance(); // v3 API
+  return vizPromise;
+}
+
+async function renderDot(dot){
+  const viz = await getViz();
+  const svg = await viz.renderSVGElement(dot, { engine: 'dot' });
+  const root=document.getElementById('graph');
+  root.innerHTML=""; root.appendChild(svg);
+
+  pan = svgPanZoom(svg,{zoomEnabled:true,fit:true,center:true});
+
+  // клики по узлам: <g class="node"><title>L123</title>...</g>
+  svg.querySelectorAll('g.node > title').forEach(t=>{
+    const name=t.textContent.trim(); const m=name.match(/^L(\d+)$/);
+    if(!m) return; const line=parseInt(m[1],10); const g=t.parentNode;
+    g.style.cursor='pointer';
+    g.addEventListener('click',()=>{
+      svg.querySelectorAll('g.node').forEach(n=>n.classList.remove('active'));
+      g.classList.add('active');
+      if(bridge && bridge.onNodeClicked) bridge.onNodeClicked(line);
+    });
+  });
+}
+
+new QWebChannel(qt.webChannelTransport, ch=>{
+  bridge = ch.objects.bridge;
+  bridge.render.connect(dot=>renderDot(dot).catch(console.error));
+  if(bridge.pageReady) bridge.pageReady();
+});
+</script>

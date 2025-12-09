@@ -1,0 +1,31 @@
+# Qt build folders
+build*/
+cmake-build*/
+*.user
+*.user.*
+
+# Qt Creator
+*.pro.user
+*.qbs.user
+*.qmlc
+*.jsc
+
+# C++ build files
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.a
+*.lib
+
+# Cache
+*.autosave
+*.qmlproject.user
+
+# Logs
+*.log
+
+# OS specific
+.DS_Store
+Thumbs.db

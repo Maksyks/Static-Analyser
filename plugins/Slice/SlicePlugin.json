@@ -1,0 +1,9 @@
+{
+  "IID": "com.myide.plugins.IPlugin.v1",
+  "MetaData": {
+    "id": "slice",
+    "name": "Program Slicer",
+    "kinds": ["slice.v1"],
+    "version": "1.0.0"
+  }
+}

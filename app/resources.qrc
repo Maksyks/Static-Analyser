@@ -1,0 +1,7 @@
+<RCC>
+  <qresource prefix="/graph">
+    <file>web/graph.html</file>
+    <file>web/viz.js</file>
+    <file>web/svg-pan-zoom.min.js</file>
+  </qresource>
+</RCC>

@@ -1,0 +1,9 @@
+{
+  "IID": "com.myide.plugins.IPlugin.v1",
+  "MetaData": {
+    "id": "addrmap",
+    "name": "Address Mapper",
+    "kinds": ["addrmap.v1"],
+    "version": "1.0.0"
+  }
+}
