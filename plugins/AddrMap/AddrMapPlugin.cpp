@@ -254,6 +254,9 @@ QString AddrMapPlugin::analyze(const QString& code) const {
     const QRegularExpression reAssignNull(R"(^\s*([A-Za-z_]\w*)\s*=\s*(NULL|0|nullptr)\s*;)");
     const QRegularExpression reIfEqNull(R"(^\s*if\s*\(\s*([A-Za-z_]\w*)\s*==\s*(NULL|0|nullptr)\s*\))");
     const QRegularExpression reIfNeNull(R"(^\s*if\s*\(\s*([A-Za-z_]\w*)\s*!=\s*(NULL|0|nullptr)\s*\))");
+    const QRegularExpression reIfChainEqNull(R"(^\s*if\s*\(\s*([A-Za-z_]\w*(?:\s*->\s*[A-Za-z_]\w*)*)\s*==\s*(NULL|0|nullptr)\s*\))");
+    const QRegularExpression reIfChainNeNull(R"(^\s*if\s*\(\s*([A-Za-z_]\w*(?:\s*->\s*[A-Za-z_]\w*)*)\s*!=\s*(NULL|0|nullptr)\s*\))");
+
 
     // general chain equality/inequality: e.g. if (x == q->right->left)
     const QRegularExpression reIfEqAny(R"(^\s*if\s*\(\s*([A-Za-z_]\w*(?:\s*->\s*[A-Za-z_]\w*)*)\s*==\s*([A-Za-z_]\w*(?:\s*->\s*[A-Za-z_]\w*)*)\s*\))");
@@ -334,6 +337,14 @@ QString AddrMapPlugin::analyze(const QString& code) const {
 
         // if (expr == expr) — общий случай (цепочки)
         if (auto m = reIfEqAny.match(line); m.hasMatch()) {
+            QString leftRaw  = m.captured(1).trimmed();
+            QString rightRaw = m.captured(2).trimmed();
+            //если одна из сторон — NULL/0/nullptr, это не alias, а обычный NULL-констрейнт
+            if (isNullLike(leftRaw) || isNullLike(rightRaw)) {
+                // пусть это обработают reIfEqNull/reIfChainEqNull во 2-м проходе
+                continue;
+            }
+
             Chain L = parseChain(m.captured(1));
             Chain R = parseChain(m.captured(2));
             // вычислим «последнюю модификацию» для баз
@@ -482,6 +493,37 @@ QString AddrMapPlugin::analyze(const QString& code) const {
             continue;
         }
 
+        // if (p->next == NULL) или if (p->next->next == 0)
+        if (auto m = reIfChainEqNull.match(line); m.hasMatch()) {
+            const QString expr = m.captured(1);
+            QStringList chain = parseChainExpr(expr);
+
+            int addr = useChain(st, chain,
+                                /*createIfClassI*/true,
+                                /*createBaseIfMissing*/true,
+                                /*markNonNull*/false); // только находим узел
+            if (addr != 0) {
+                setNullFlag(st, addr, 1);  // null=1
+                st.constraints << QString("[%1] %2 == NULL").arg(lineNo).arg(expr);
+            }
+            continue;
+        }
+
+        if (auto m = reIfChainNeNull.match(line); m.hasMatch()) {
+            const QString expr = m.captured(1);
+            QStringList chain = parseChainExpr(expr);
+
+            int addr = useChain(st, chain,
+                                /*createIfClassI*/true,
+                                /*createBaseIfMissing*/true,
+                                /*markNonNull*/false); // тут не хотим ставить null=2 автоматически от USE
+            if (addr != 0) {
+                setNullFlag(st, addr, 2);  // null=2 (обязательно не-NULL)
+                st.constraints << QString("[%1] %2 != NULL").arg(lineNo).arg(expr);
+            }
+            continue;
+        }
+
         // if (expr != expr) — CONSTRAINT INEQUALITY (не модифицирует память)
         if (auto m = reIfNeAny.match(line); m.hasMatch()) {
             QStringList L = parseChainExpr(m.captured(1));
@@ -511,27 +553,45 @@ QString AddrMapPlugin::analyze(const QString& code) const {
         // y->f = z / NULL;
         if (auto m = reFieldAssign1.match(line); m.hasMatch()) {
             const QString y = m.captured(1), f = m.captured(2), z = m.captured(3);
-            int base = ensureVar(st, y); // первое использование создаст class I
+
+            // 1) USE для базы y: создаём входной адрес, помечаем y как non-NULL
+            int base = useChain(st, QStringList{y},
+                                /*createIfClassI*/true,
+                                /*createBaseIfMissing*/true,
+                                /*markNonNull*/true);
             if (base==0 || !st.mem.contains(base) || !st.mem[base].active) {
                 st.errors << QString("[%1] запись в %2->%3 невозможна").arg(lineNo).arg(y, f);
                 continue;
             }
+            if (st.mem[base].nullFlag == 1) {
+                st.errors << QString("[%1] разыменование NULL (%2)").arg(lineNo).arg(y);
+                continue;
+            }
+
+            // 2) целевой адрес
             int target = 0;
             if (!isNullLike(z)) {
-                // явный alias RHS: используем ensureVar (если это просто переменная)
-                target = ensureVar(st, z);
-                if (target==0) st.errors << QString("[%1] RHS %2 == NULL?").arg(lineNo).arg(z);
+                target = ensureVar(st, z); // явный алиас RHS
+                if (target==0)
+                    st.errors << QString("[%1] RHS %2 == NULL?").arg(lineNo).arg(z);
             }
-            if (!st.mem[base].fields.contains(f) && st.mem[base].classI)
-                (void)ensureField(st, base, f, /*nextIsClassI*/true); // создаём звено класса I при первом присваивании
-            // проверка неравенства
+
+            // 3) если поле ещё не создано, а база — class I -> создаём child class I
+            if (!st.mem[base].fields.contains(f) && st.mem[base].classI) {
+                (void)ensureField(st, base, f, /*nextIsClassI*/true);
+            }
+
+            // 4) проверка неравенства
             int prev = st.mem[base].fields.value(f, 0);
             if (prev!=0 && target!=0 &&
-                (st.mem.contains(prev) && st.mem[prev].unequal.contains(target))) {
-                st.errors << QString("[%1] %2->%3 := a%4 против p!=q").arg(lineNo).arg(y, f).arg(target);
+                st.mem.contains(prev) && st.mem[prev].unequal.contains(target)) {
+                st.errors << QString("[%1] %2->%3 := a%4 против p!=q")
+                                 .arg(lineNo).arg(y, f).arg(target);
             }
+
+            // 5) запись + синхронизация χ
             st.mem[base].fields[f] = target;
-            mirrorFieldWriteToSolution(st, base, f, target); // χ ← ψ
+            mirrorFieldWriteToSolution(st, base, f, target);
             continue;
         }
 
