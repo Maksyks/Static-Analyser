@@ -256,7 +256,8 @@ QString AddrMapPlugin::analyze(const QString& code) const {
     const QRegularExpression reIfNeNull(R"(^\s*if\s*\(\s*([A-Za-z_]\w*)\s*!=\s*(NULL|0|nullptr)\s*\))");
     const QRegularExpression reIfChainEqNull(R"(^\s*if\s*\(\s*([A-Za-z_]\w*(?:\s*->\s*[A-Za-z_]\w*)*)\s*==\s*(NULL|0|nullptr)\s*\))");
     const QRegularExpression reIfChainNeNull(R"(^\s*if\s*\(\s*([A-Za-z_]\w*(?:\s*->\s*[A-Za-z_]\w*)*)\s*!=\s*(NULL|0|nullptr)\s*\))");
-
+    const QRegularExpression reMainDecl(R"(^\s*int\s+main\s*\()");
+    const QRegularExpression reDeclInitAlias(R"(^\s*\w+\s*\*\s*([A-Za-z_]\w*)\s*=\s*([A-Za-z_]\w*)\s*;)");
 
     // general chain equality/inequality: e.g. if (x == q->right->left)
     const QRegularExpression reIfEqAny(R"(^\s*if\s*\(\s*([A-Za-z_]\w*(?:\s*->\s*[A-Za-z_]\w*)*)\s*==\s*([A-Za-z_]\w*(?:\s*->\s*[A-Za-z_]\w*)*)\s*\))");
@@ -271,6 +272,40 @@ QString AddrMapPlugin::analyze(const QString& code) const {
             LineInfo li; li.index=idx++; li.lineNo=lineNo; li.text=line; lines.push_back(li);
         }
     }
+
+    // Ищем первое ОПРЕДЕЛЕНИЕ int main(...) и всё, что после него, игнорируем
+    int mainStartIdx = lines.size();  // по умолчанию "нет main"
+    for (int i = 0; i < lines.size(); ++i) {
+        const QString &text = lines[i].text;
+        if (!reMainDecl.match(text).hasMatch())
+            continue;
+
+        bool isDefinition = false;
+
+        // 1) main на той же строке с '{'
+        if (text.contains('{')) {
+            isDefinition = true;
+        } else {
+            // 2) Ищем следующую непустую строку: если это "{", значит это определение,
+            // иначе — прототип (int main();), который игнорируем.
+            for (int j = i + 1; j < lines.size(); ++j) {
+                const QString &nextText = lines[j].text;
+                if (nextText.isEmpty())
+                    continue;
+                if (nextText.startsWith("{")) {
+                    isDefinition = true;
+                }
+                // если это не "{", значит это не тело main
+                break;
+            }
+        }
+
+        if (isDefinition) {
+            mainStartIdx = lines[i].index; // индекс строки, где начинается main
+            break;
+        }
+    }
+
 
     // 1-й проход: SymTab + AliasTab (препроцессор алиасов)
     struct SymEntry {
@@ -296,6 +331,8 @@ QString AddrMapPlugin::analyze(const QString& code) const {
 
     // Собираем определения и планируем alias’ы
     for (const LineInfo& li : lines) {
+        if (li.index >= mainStartIdx) break;//ограничение main
+
         const QString& line = li.text;
         if (line.isEmpty()) continue;
 
@@ -375,6 +412,8 @@ QString AddrMapPlugin::analyze(const QString& code) const {
 
     // 2-й проход: AddressMapper + выполнение aliasBefore
     for (const LineInfo& li : lines) {
+        if (li.index >= mainStartIdx) break;//исключаем main
+
         const int idx    = li.index;
         const int lineNo = li.lineNo;
         const QString& line = li.text;
@@ -425,10 +464,11 @@ QString AddrMapPlugin::analyze(const QString& code) const {
                 if (checkUnequal(existing, rhsAddr)) {
                     st.errors << QString("[%1] alias(%2->%3 := …) против p!=q").arg(op.condLineNo).arg(op.lhs.base, lastField);
                 }
-                if (!st.mem[baseAddr].fields.contains(lastField) && st.mem[baseAddr].classI) {
-                    int child = ensureField(st, baseAddr, lastField, /*nextIsClassI*/true);
-                    Q_UNUSED(child);
-                }
+                //создает адрес дочернего элемента после алиаса
+                // if (!st.mem[baseAddr].fields.contains(lastField) && st.mem[baseAddr].classI) {
+                //     int child = ensureField(st, baseAddr, lastField, /*nextIsClassI*/true);
+                //     Q_UNUSED(child);
+                // }
                 st.mem[baseAddr].fields[lastField] = rhsAddr;
                 mirrorFieldWriteToSolution(st, baseAddr, lastField, rhsAddr); // χ ← ψ
             }
