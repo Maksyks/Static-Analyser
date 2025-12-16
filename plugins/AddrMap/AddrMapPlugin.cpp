@@ -47,13 +47,18 @@ int AddrMapPlugin::createCell(State& st, bool classI) const {
 }
 
 int AddrMapPlugin::ensureVar(State& st, const QString& var) const {
-    if (!st.env.contains(var) || st.env[var] == 0) {
-        // первая реальная ИСПОЛЬЗОВАНИЕ переменной -> создаём входной адрес (class I)
+    if (isNullLike(var)) return 0;
+
+    // создаём адрес только если переменная вообще не встречалась
+    if (!st.env.contains(var)) {
         int a = createCell(st, /*classI*/true);
         st.env[var] = a;
     }
-    return st.env[var];
+
+    // если переменная была присвоена NULL, тут будет 0 — и это правильно
+    return st.env.value(var, 0);
 }
+
 
 //синхронизация χ при появлении дочернего узла
 void AddrMapPlugin::mirrorEnsureChildInSolution(State& st, int parentAddr, const QString& field, int childAddr) const {
@@ -147,6 +152,11 @@ int AddrMapPlugin::useChain(State& st, const QStringList& chain,
         cur = st.env.value(chain.front(), 0);
     }
     if (cur == 0) return 0;
+
+    // USE: base of a dereference chain must be non-NULL
+    if (markNonNull) {
+        setNullFlag(st, cur, 2);
+    }
 
     for (int i=1;i<chain.size();++i) {
         const QString f = chain[i];
@@ -246,6 +256,11 @@ QString AddrMapPlugin::analyze(const QString& code) const {
     State st;
 
     const QRegularExpression reDeclPtr(R"(^\s*\w+\s*\*\s*([A-Za-z_]\w*)\s*;)");
+    // Pointer declaration with initializer: T* x = y;
+    // (needed for: Node *p = head;)
+    const QRegularExpression reDeclInitAlias(
+        R"(^\s*(?:[A-Za-z_]\w*\s+)*[A-Za-z_]\w*\s*\*\s*([A-Za-z_]\w*)\s*=\s*([A-Za-z_]\w*)\s*;)"
+        );
     const QRegularExpression reAssignAlias(R"(^\s*([A-Za-z_]\w*)\s*=\s*([A-Za-z_]\w*)\s*;)");
     const QRegularExpression reAssignFieldGet1(R"(^\s*([A-Za-z_]\w*)\s*=\s*([A-Za-z_]\w*)\s*->\s*([A-Za-z_]\w*)\s*;)");
     const QRegularExpression reFieldAssign1(R"(^\s*([A-Za-z_]\w*)\s*->\s*([A-Za-z_]\w*)\s*=\s*([A-Za-z_]\w*|NULL|0|nullptr)\s*;)");
@@ -256,8 +271,12 @@ QString AddrMapPlugin::analyze(const QString& code) const {
     const QRegularExpression reIfNeNull(R"(^\s*if\s*\(\s*([A-Za-z_]\w*)\s*!=\s*(NULL|0|nullptr)\s*\))");
     const QRegularExpression reIfChainEqNull(R"(^\s*if\s*\(\s*([A-Za-z_]\w*(?:\s*->\s*[A-Za-z_]\w*)*)\s*==\s*(NULL|0|nullptr)\s*\))");
     const QRegularExpression reIfChainNeNull(R"(^\s*if\s*\(\s*([A-Za-z_]\w*(?:\s*->\s*[A-Za-z_]\w*)*)\s*!=\s*(NULL|0|nullptr)\s*\))");
-    const QRegularExpression reMainDecl(R"(^\s*int\s+main\s*\()");
-    const QRegularExpression reDeclInitAlias(R"(^\s*\w+\s*\*\s*([A-Za-z_]\w*)\s*=\s*([A-Za-z_]\w*)\s*;)");
+    const QRegularExpression reAssignChainGet(R"(^\s*([A-Za-z_]\w*)\s*=\s*([A-Za-z_]\w*(?:\s*->\s*[A-Za-z_]\w*)+)\s*;)");
+
+
+    // stop analysis when main() definition starts
+    const QRegularExpression reMainDecl(R"(^\s*int\s+main\s*\()" );
+
 
     // general chain equality/inequality: e.g. if (x == q->right->left)
     const QRegularExpression reIfEqAny(R"(^\s*if\s*\(\s*([A-Za-z_]\w*(?:\s*->\s*[A-Za-z_]\w*)*)\s*==\s*([A-Za-z_]\w*(?:\s*->\s*[A-Za-z_]\w*)*)\s*\))");
@@ -273,39 +292,89 @@ QString AddrMapPlugin::analyze(const QString& code) const {
         }
     }
 
-    // Ищем первое ОПРЕДЕЛЕНИЕ int main(...) и всё, что после него, игнорируем
-    int mainStartIdx = lines.size();  // по умолчанию "нет main"
+    // === find first main() DEFINITION and ignore everything after it ===
+    int mainStartIdx = lines.size();  // default: "no main"
     for (int i = 0; i < lines.size(); ++i) {
         const QString &text = lines[i].text;
         if (!reMainDecl.match(text).hasMatch())
             continue;
 
         bool isDefinition = false;
-
-        // 1) main на той же строке с '{'
         if (text.contains('{')) {
             isDefinition = true;
         } else {
-            // 2) Ищем следующую непустую строку: если это "{", значит это определение,
-            // иначе — прототип (int main();), который игнорируем.
             for (int j = i + 1; j < lines.size(); ++j) {
                 const QString &nextText = lines[j].text;
                 if (nextText.isEmpty())
                     continue;
-                if (nextText.startsWith("{")) {
+                if (nextText.startsWith('{')) {
                     isDefinition = true;
                 }
-                // если это не "{", значит это не тело main
-                break;
+                break; // first non-empty line checked
             }
         }
 
         if (isDefinition) {
-            mainStartIdx = lines[i].index; // индекс строки, где начинается main
+            mainStartIdx = lines[i].index;
             break;
         }
     }
 
+    // === Seed γ with pointer parameters from the first function definition (before main) ===
+    auto seedInputPointerParams = [&]() {
+        auto startsWithKw = [](const QString& s, const char* kw) -> bool {
+            const QString k = QString::fromLatin1(kw);
+            if (!s.startsWith(k)) return false;
+            if (s.size() == k.size()) return true;
+            const QChar ch = s[k.size()];
+            return ch.isSpace() || ch == '(';
+        };
+
+        for (int i = 0; i < lines.size() && i < mainStartIdx; ++i) {
+            const QString text = lines[i].text;
+            if (text.isEmpty()) continue;
+            if (startsWithKw(text, "if") || startsWithKw(text, "for") || startsWithKw(text, "while") ||
+                startsWithKw(text, "switch") || startsWithKw(text, "return")) {
+                continue;
+            }
+
+            const int lparen = text.indexOf('(');
+            const int rparen = text.lastIndexOf(')');
+            if (lparen < 0 || rparen < lparen) continue;
+
+            bool isDef = text.contains('{');
+            if (!isDef) {
+                for (int j = i + 1; j < lines.size() && j < mainStartIdx; ++j) {
+                    const QString next = lines[j].text;
+                    if (next.isEmpty()) continue;
+                    if (next.startsWith('{')) isDef = true;
+                    break;
+                }
+            }
+            if (!isDef) continue;
+
+            const QString params = text.mid(lparen + 1, rparen - lparen - 1).trimmed();
+            if (params.isEmpty() || params == "void") { continue; } // function with no pointer params
+
+            const QRegularExpression reLastIdent(R"(([A-Za-z_]\w*)\s*$)");
+
+            for (const QString& rawParam : params.split(',', Qt::SkipEmptyParts)) {
+                QString p = rawParam.trimmed();
+                if (!p.contains('*')) continue; // only pointer params
+
+                auto mm = reLastIdent.match(p);
+                if (!mm.hasMatch()) continue;
+                const QString name = mm.captured(1);
+                if (name.isEmpty()) continue;
+                if (isNullLike(name)) continue;
+
+                // In the paper, input parameters are class I and exist at entry.
+                (void)ensureVar(st, name);
+            }
+            // continue: allow multiple function definitions in the slice
+        }
+    };
+    seedInputPointerParams();
 
     // 1-й проход: SymTab + AliasTab (препроцессор алиасов)
     struct SymEntry {
@@ -331,10 +400,16 @@ QString AddrMapPlugin::analyze(const QString& code) const {
 
     // Собираем определения и планируем alias’ы
     for (const LineInfo& li : lines) {
-        if (li.index >= mainStartIdx) break;//ограничение main
-
+        if (li.index >= mainStartIdx) break;
         const QString& line = li.text;
         if (line.isEmpty()) continue;
+
+        // T* x = y;   (declaration with init) -> x was "defined" here
+        if (auto m = reDeclInitAlias.match(line); m.hasMatch()) {
+            const QString x = m.captured(1);
+            symTab[x].varDef = li.index;
+            continue;
+        }
 
         // x = malloc(...)
         if (auto m = reMalloc.match(line); m.hasMatch()) {
@@ -374,14 +449,12 @@ QString AddrMapPlugin::analyze(const QString& code) const {
 
         // if (expr == expr) — общий случай (цепочки)
         if (auto m = reIfEqAny.match(line); m.hasMatch()) {
-            QString leftRaw  = m.captured(1).trimmed();
-            QString rightRaw = m.captured(2).trimmed();
-            //если одна из сторон — NULL/0/nullptr, это не alias, а обычный NULL-констрейнт
-            if (isNullLike(leftRaw) || isNullLike(rightRaw)) {
-                // пусть это обработают reIfEqNull/reIfChainEqNull во 2-м проходе
+            const QString Lraw = m.captured(1).trimmed();
+            const QString Rraw = m.captured(2).trimmed();
+            if (isNullLike(Lraw) || isNullLike(Rraw)) {
+                // сравнение с NULL не превращаем в alias; это обработается как NULL-constraint во 2-м проходе
                 continue;
             }
-
             Chain L = parseChain(m.captured(1));
             Chain R = parseChain(m.captured(2));
             // вычислим «последнюю модификацию» для баз
@@ -397,7 +470,17 @@ QString AddrMapPlugin::analyze(const QString& code) const {
             const int lastL = lastDef(L);
             const int lastR = lastDef(R);
             int place = std::max(lastL, lastR);
-            if (place < 0) place = li.index;
+            // IMPORTANT: placeIndex is the line index **before which** we execute the alias.
+            // The paper inserts the explicit alias **after** the last modification of either side.
+            // So when we know the last modification index, we must schedule at (last+1).
+            // If we have no information (place < 0), keep it right before the condition line.
+            if (place < 0) {
+                place = li.index;
+            } else {
+                place = place + 1;
+                if (place > li.index) place = li.index;
+            }
+            if (place < 0) place = 0;
             if (place >= lines.size()) place = lines.size()-1;
 
             AliasOp op; op.placeIndex=place; op.lhs=L; op.rhs=R; op.condLineNo=li.lineNo;
@@ -412,8 +495,7 @@ QString AddrMapPlugin::analyze(const QString& code) const {
 
     // 2-й проход: AddressMapper + выполнение aliasBefore
     for (const LineInfo& li : lines) {
-        if (li.index >= mainStartIdx) break;//исключаем main
-
+        if (li.index >= mainStartIdx) break;
         const int idx    = li.index;
         const int lineNo = li.lineNo;
         const QString& line = li.text;
@@ -448,8 +530,6 @@ QString AddrMapPlugin::analyze(const QString& code) const {
                 if (checkUnequal(lhsAddrCur, rhsAddr)) {
                     st.errors << QString("[%1] alias(%2 := …) противоречит p!=q").arg(op.condLineNo).arg(op.lhs.base);
                 }
-                // создаём переменную при первом использовании
-                (void)ensureVar(st, op.lhs.base);
                 st.env[op.lhs.base] = rhsAddr;
             } else {
                 // lhs — цепочка поля: p->f1->..->fk := rhs
@@ -464,11 +544,6 @@ QString AddrMapPlugin::analyze(const QString& code) const {
                 if (checkUnequal(existing, rhsAddr)) {
                     st.errors << QString("[%1] alias(%2->%3 := …) против p!=q").arg(op.condLineNo).arg(op.lhs.base, lastField);
                 }
-                //создает адрес дочернего элемента после алиаса
-                // if (!st.mem[baseAddr].fields.contains(lastField) && st.mem[baseAddr].classI) {
-                //     int child = ensureField(st, baseAddr, lastField, /*nextIsClassI*/true);
-                //     Q_UNUSED(child);
-                // }
                 st.mem[baseAddr].fields[lastField] = rhsAddr;
                 mirrorFieldWriteToSolution(st, baseAddr, lastField, rhsAddr); // χ ← ψ
             }
@@ -483,6 +558,27 @@ QString AddrMapPlugin::analyze(const QString& code) const {
 
         // САМИ ОПЕРАЦИИ
 
+        // T* x = y;  (explicit alias at declaration)
+        if (auto m = reDeclInitAlias.match(line); m.hasMatch()) {
+            const QString x = m.captured(1);
+            const QString y = m.captured(2);
+
+            if (x != y) {
+                if (isNullLike(y)) {
+                    st.env[x] = 0;
+                    st.constraints << QString("[%1] %2 = NULL").arg(lineNo).arg(x);
+                } else {
+                    const int rhs = ensureVar(st, y);
+                    const int lhs = st.env.value(x, 0);
+                    if (lhs!=0 && rhs!=0 && st.mem.contains(lhs) && st.mem[lhs].unequal.contains(rhs)) {
+                        st.errors << QString("[%1] %2 := %3 против p!=q").arg(lineNo).arg(x, y);
+                    }
+                    st.env[x] = rhs;
+                }
+            }
+            continue;
+        }
+
         // объявление указателя: T* x;  — НИЧЕГО НЕ ДЕЛАТЬ (из статьи)
         if (auto m = reDeclPtr.match(line); m.hasMatch()) {
             // no-op
@@ -496,6 +592,7 @@ QString AddrMapPlugin::analyze(const QString& code) const {
             st.env[v] = addr;
             continue;
         }
+
 
         // free(x); Delete
         if (auto m = reFree.match(line); m.hasMatch()) {
@@ -530,37 +627,71 @@ QString AddrMapPlugin::analyze(const QString& code) const {
             int a = st.env.value(m.captured(1), 0);
             if (a!=0) setNullFlag(st, a, 2);
             st.constraints << QString("[%1] %2 != NULL").arg(lineNo).arg(m.captured(1));
-            continue;
-        }
 
-        // if (p->next == NULL) или if (p->next->next == 0)
-        if (auto m = reIfChainEqNull.match(line); m.hasMatch()) {
-            const QString expr = m.captured(1);
-            QStringList chain = parseChainExpr(expr);
-
-            int addr = useChain(st, chain,
-                                /*createIfClassI*/true,
-                                /*createBaseIfMissing*/true,
-                                /*markNonNull*/false); // только находим узел
-            if (addr != 0) {
-                setNullFlag(st, addr, 1);  // null=1
+            // if (p->f->g == NULL) / if (p->f->g != NULL) — ограничения на NULL для цепочки
+            // Важно: это ограничение относится к ПОСЛЕДНЕМУ полю; базовая часть цепочки должна быть разыменована (=> non-NULL).
+            if (auto m = reIfChainEqNull.match(line); m.hasMatch()) {
+                const QString expr = m.captured(1).trimmed();
+                QStringList chain = parseChainExpr(expr);
+                if (chain.size() >= 2) {
+                    const QString lastField = chain.takeLast();
+                    const int base = useChain(st, chain,
+                                              /*createIfClassI*/true,
+                                              /*createBaseIfMissing*/true,
+                                              /*markNonNull*/true);
+                    if (base==0 || !st.mem.contains(base) || !st.mem[base].active) {
+                        st.errors << QString("[%1] constraint %2 == NULL невозможно").arg(lineNo).arg(expr);
+                    } else {
+                        // поле указывает на NULL
+                        st.mem[base].fields[lastField] = 0;
+                        mirrorFieldWriteToSolution(st, base, lastField, 0);
+                    }
+                } else {
+                    // это обычная переменная; пусть обработает reIfEqNull
+                }
                 st.constraints << QString("[%1] %2 == NULL").arg(lineNo).arg(expr);
+                continue;
             }
-            continue;
-        }
-
-        if (auto m = reIfChainNeNull.match(line); m.hasMatch()) {
-            const QString expr = m.captured(1);
-            QStringList chain = parseChainExpr(expr);
-
-            int addr = useChain(st, chain,
-                                /*createIfClassI*/true,
-                                /*createBaseIfMissing*/true,
-                                /*markNonNull*/false); // тут не хотим ставить null=2 автоматически от USE
-            if (addr != 0) {
-                setNullFlag(st, addr, 2);  // null=2 (обязательно не-NULL)
+            if (auto m = reIfChainNeNull.match(line); m.hasMatch()) {
+                const QString expr = m.captured(1).trimmed();
+                QStringList chain = parseChainExpr(expr);
+                if (chain.size() >= 2) {
+                    const QString lastField = chain.takeLast();
+                    const int base = useChain(st, chain,
+                                              /*createIfClassI*/true,
+                                              /*createBaseIfMissing*/true,
+                                              /*markNonNull*/true);
+                    if (base==0 || !st.mem.contains(base) || !st.mem[base].active) {
+                        st.errors << QString("[%1] constraint %2 != NULL невозможно").arg(lineNo).arg(expr);
+                    } else {
+                        int cur = st.mem[base].fields.value(lastField, 0);
+                        if (cur == 0) {
+                            // если поле не задано или было приравнено к NULL — нужно создать non-NULL адрес
+                            int child = 0;
+                            if (st.mem[base].classI) {
+                                child = ensureField(st, base, lastField, /*nextIsClassI*/true);
+                            } else {
+                                // для class II допустимо создать новый heap-узел (class II)
+                                child = createCell(st, /*classI*/false);
+                            }
+                            if (child==0) {
+                                st.errors << QString("[%1] %2 != NULL: не удалось создать адрес").arg(lineNo).arg(expr);
+                            } else {
+                                st.mem[base].fields[lastField] = child;
+                                mirrorFieldWriteToSolution(st, base, lastField, child);
+                                setNullFlag(st, child, 2);
+                            }
+                        } else {
+                            setNullFlag(st, cur, 2);
+                        }
+                    }
+                } else {
+                    // это обычная переменная; пусть обработает reIfNeNull
+                }
                 st.constraints << QString("[%1] %2 != NULL").arg(lineNo).arg(expr);
+                continue;
             }
+
             continue;
         }
 
@@ -649,6 +780,8 @@ QString AddrMapPlugin::analyze(const QString& code) const {
             }
             continue;
         }
+
+
 
         // прочее игнорируем
     }
