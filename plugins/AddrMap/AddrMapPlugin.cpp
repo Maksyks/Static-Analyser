@@ -138,6 +138,80 @@ int AddrMapPlugin::peekChain(const State& st, const QStringList& chain) const {
     }
     return cur;
 }
+    AddrMapPlugin::ChainValue AddrMapPlugin::evalChainValue(State& st, const QStringList& chain,
+                                                            bool createIfClassI,
+                                                            bool createBaseIfMissing,
+                                                            bool markNonNull) const
+    {
+        ChainValue r;
+        if (chain.isEmpty())
+            return r;
+
+        int cur = 0;
+        if (createBaseIfMissing) {
+            cur = ensureVar(st, chain.front());
+        } else {
+            cur = st.env.value(chain.front(), 0);
+        }
+
+        // Просто чтение переменной-указателя (без разыменования).
+        if (chain.size() == 1) {
+            r.ok = true;
+            r.value = cur; // может быть 0 (NULL)
+            return r;
+        }
+
+        // Любая цепочка длиной >1 требует разыменования base-узла.
+        if (cur == 0)
+            return r;
+
+        if (markNonNull)
+            setNullFlag(st, cur, 2);
+
+        for (int i = 1; i < chain.size(); ++i) {
+            const QString f = chain[i];
+
+            if (!st.mem.contains(cur))
+                return r;
+            Cell& c = st.mem[cur];
+            if (!c.active)
+                return r;
+            if (c.nullFlag == 1)
+                return r;
+
+            if (markNonNull && c.nullFlag != 2) {
+                setNullFlag(st, c.id, 2);
+            }
+
+            int next = c.fields.value(f, 0);
+
+            // При чтении поля class I: если поля ещё нет, считаем что оно ведёт к новому входному адресу
+            // (как "reserved address" в статье).
+            if (next == 0 && c.classI && createIfClassI) {
+                next = ensureField(st, c.id, f, /*nextIsClassI*/ true);
+            }
+
+            const bool isLast = (i == chain.size() - 1);
+            if (isLast) {
+                r.ok = true;
+                r.value = next; // может быть 0 (NULL)
+                return r;
+            }
+
+            // Для продолжения цепочки (…->f->g) промежуточный узел обязан быть не-NULL.
+            if (next == 0)
+                return r;
+
+            cur = next;
+        }
+
+        // unreachable
+        r.ok = true;
+        r.value = cur;
+        return r;
+    }
+
+
 
 int AddrMapPlugin::useChain(State& st, const QStringList& chain,
                             bool createIfClassI,
@@ -209,8 +283,13 @@ QString AddrMapPlugin::dumpReport(const State& st, bool valid) const {
         for (auto &e : st.errors) os << "  error: " << e << "\n";
     }
     os << "\n[g] Environment (var -> addr)\n";
-    for (auto it=st.env.begin(); it!=st.env.end(); ++it) {
-        os << "  " << it.key() << " -> " << (it.value()==0 ? "NULL" : QString("a%1").arg(it.value())) << "\n";
+    for (auto it = st.env.begin(); it != st.env.end(); ++it) {
+        const int a = it.value();
+        bool isNull = (a == 0);
+        if (!isNull && st.mem.contains(a) && st.mem[a].nullFlag == 1) {
+            isNull = true;
+        }
+        os << "  " << it.key() << " -> " << (isNull ? "NULL" : QString("a%1").arg(a)) << "\n";
     }
 
     os << "\n[j] Memory (addr: {field->addr} | class active null | unequal)\n";
@@ -264,6 +343,7 @@ QString AddrMapPlugin::analyze(const QString& code) const {
     const QRegularExpression reAssignAlias(R"(^\s*([A-Za-z_]\w*)\s*=\s*([A-Za-z_]\w*)\s*;)");
     const QRegularExpression reAssignFieldGet1(R"(^\s*([A-Za-z_]\w*)\s*=\s*([A-Za-z_]\w*)\s*->\s*([A-Za-z_]\w*)\s*;)");
     const QRegularExpression reFieldAssign1(R"(^\s*([A-Za-z_]\w*)\s*->\s*([A-Za-z_]\w*)\s*=\s*([A-Za-z_]\w*|NULL|0|nullptr)\s*;)");
+    const QRegularExpression reFieldAssignChain(R"(^\s*([A-Za-z_]\w*)\s*->\s*([A-Za-z_]\w*)\s*=\s*([A-Za-z_]\w*(?:\s*->\s*[A-Za-z_]\w*)+)\s*;)");
     const QRegularExpression reMalloc(R"(^\s*([A-Za-z_]\w*)\s*=\s*(?:\([^)]*\)\s*)?malloc\s*\()");
     const QRegularExpression reFree(R"(^\s*free\s*\(\s*([A-Za-z_]\w*)\s*\)\s*;)");
     const QRegularExpression reAssignNull(R"(^\s*([A-Za-z_]\w*)\s*=\s*(NULL|0|nullptr)\s*;)");
@@ -433,8 +513,22 @@ QString AddrMapPlugin::analyze(const QString& code) const {
             continue;
         }
 
+        // x = y->f->g;  (любой уровень >1)
+        if (auto m = reAssignChainGet.match(line); m.hasMatch()) {
+            const QString x = m.captured(1);
+            symTab[x].varDef = li.index;
+            continue;
+        }
+
         // y->f = z;  (1 уровень)
         if (auto m = reFieldAssign1.match(line); m.hasMatch()) {
+            const QString y = m.captured(1), f = m.captured(2);
+            symTab[y].fieldDef[f] = li.index;
+            continue;
+        }
+
+        // y->f = x->g->h;  (присваивание из цепочки)
+        if (auto m = reFieldAssignChain.match(line); m.hasMatch()) {
             const QString y = m.captured(1), f = m.captured(2);
             symTab[y].fieldDef[f] = li.index;
             continue;
@@ -470,10 +564,6 @@ QString AddrMapPlugin::analyze(const QString& code) const {
             const int lastL = lastDef(L);
             const int lastR = lastDef(R);
             int place = std::max(lastL, lastR);
-            // IMPORTANT: placeIndex is the line index **before which** we execute the alias.
-            // The paper inserts the explicit alias **after** the last modification of either side.
-            // So when we know the last modification index, we must schedule at (last+1).
-            // If we have no information (place < 0), keep it right before the condition line.
             if (place < 0) {
                 place = li.index;
             } else {
@@ -510,9 +600,16 @@ QString AddrMapPlugin::analyze(const QString& code) const {
                 r << C.base; for (auto &x: C.f) r << x; return r;
             };
 
-            // адрес-источник (rhs) — создаём недостающее в class I
-            int rhsAddr = useChain(st, toList(op.rhs), /*createIfClassI*/true, /*createBaseIfMissing*/true, /*markNonNull*/true);
-            if (rhsAddr==0) { st.errors << QString("[%1] alias rhs недоступен").arg(op.condLineNo); continue; }
+            // адрес-источник (rhs) — вычисляем значение цепочки (на последнем шаге может быть NULL)
+            const auto rhsRes = evalChainValue(st, toList(op.rhs),
+                                               /*createIfClassI*/ true,
+                                               /*createBaseIfMissing*/ true,
+                                               /*markNonNull*/ true);
+            if (!rhsRes.ok) {
+                st.errors << QString("[%1] alias rhs недоступен").arg(op.condLineNo);
+                continue;
+            }
+            const int rhsAddr = rhsRes.value;
 
             // Запрет неравенства?
             // Если уже известно, что lhs и rhs неравны — путь невозможен
@@ -528,7 +625,7 @@ QString AddrMapPlugin::analyze(const QString& code) const {
                 // lhs — переменная
                 int lhsAddrCur = st.env.value(op.lhs.base, 0);
                 if (checkUnequal(lhsAddrCur, rhsAddr)) {
-                    st.errors << QString("[%1] alias(%2 := …) противоречит p!=q").arg(op.condLineNo).arg(op.lhs.base);
+                    st.errors << QString("[%1] alias(%2 := …) противоречит Ax!=Ay").arg(op.condLineNo).arg(op.lhs.base);
                 }
                 st.env[op.lhs.base] = rhsAddr;
             } else {
@@ -542,7 +639,7 @@ QString AddrMapPlugin::analyze(const QString& code) const {
                 const QString lastField = op.lhs.f.back();
                 int existing = st.mem[baseAddr].fields.value(lastField, 0);
                 if (checkUnequal(existing, rhsAddr)) {
-                    st.errors << QString("[%1] alias(%2->%3 := …) против p!=q").arg(op.condLineNo).arg(op.lhs.base, lastField);
+                    st.errors << QString("[%1] alias(%2->%3 := …) против Ax!=Ay").arg(op.condLineNo).arg(op.lhs.base, lastField);
                 }
                 st.mem[baseAddr].fields[lastField] = rhsAddr;
                 mirrorFieldWriteToSolution(st, baseAddr, lastField, rhsAddr); // χ ← ψ
@@ -571,7 +668,7 @@ QString AddrMapPlugin::analyze(const QString& code) const {
                     const int rhs = ensureVar(st, y);
                     const int lhs = st.env.value(x, 0);
                     if (lhs!=0 && rhs!=0 && st.mem.contains(lhs) && st.mem[lhs].unequal.contains(rhs)) {
-                        st.errors << QString("[%1] %2 := %3 против p!=q").arg(lineNo).arg(x, y);
+                        st.errors << QString("[%1] %2 := %3 против Ax!=Ay").arg(lineNo).arg(x, y);
                     }
                     st.env[x] = rhs;
                 }
@@ -616,82 +713,88 @@ QString AddrMapPlugin::analyze(const QString& code) const {
             continue;
         }
 
-        // if (x == NULL) / if (x != NULL) — свойства null (CONSTRAINTS)
-        if (auto m = reIfEqNull.match(line); m.hasMatch()) {
-            int a = st.env.value(m.captured(1), 0);
-            if (a!=0) setNullFlag(st, a, 1);
-            st.constraints << QString("[%1] %2 == NULL").arg(lineNo).arg(m.captured(1));
-            continue;
-        }
-        if (auto m = reIfNeNull.match(line); m.hasMatch()) {
-            int a = st.env.value(m.captured(1), 0);
-            if (a!=0) setNullFlag(st, a, 2);
-            st.constraints << QString("[%1] %2 != NULL").arg(lineNo).arg(m.captured(1));
-
-            // if (p->f->g == NULL) / if (p->f->g != NULL) — ограничения на NULL для цепочки
-            // Важно: это ограничение относится к ПОСЛЕДНЕМУ полю; базовая часть цепочки должна быть разыменована (=> non-NULL).
-            if (auto m = reIfChainEqNull.match(line); m.hasMatch()) {
-                const QString expr = m.captured(1).trimmed();
-                QStringList chain = parseChainExpr(expr);
-                if (chain.size() >= 2) {
-                    const QString lastField = chain.takeLast();
-                    const int base = useChain(st, chain,
-                                              /*createIfClassI*/true,
-                                              /*createBaseIfMissing*/true,
-                                              /*markNonNull*/true);
-                    if (base==0 || !st.mem.contains(base) || !st.mem[base].active) {
-                        st.errors << QString("[%1] constraint %2 == NULL невозможно").arg(lineNo).arg(expr);
-                    } else {
-                        // поле указывает на NULL
-                        st.mem[base].fields[lastField] = 0;
-                        mirrorFieldWriteToSolution(st, base, lastField, 0);
-                    }
+        // if (p->f->g == NULL) / if (p->f->g != NULL) — ограничения на NULL для цепочки
+        // Важно: это ограничение относится к ПОСЛЕДНЕМУ полю; базовая часть цепочки должна быть разыменована (=> non-NULL).
+        if (auto m = reIfChainEqNull.match(line); m.hasMatch()) {
+            const QString expr = m.captured(1).trimmed();
+            QStringList chain = parseChainExpr(expr);
+            if (chain.size() >= 2) {
+                const QString lastField = chain.takeLast();
+                const int base = useChain(st, chain,
+                                          /*createIfClassI*/ true,
+                                          /*createBaseIfMissing*/ true,
+                                          /*markNonNull*/ true);
+                if (base == 0 || !st.mem.contains(base) || !st.mem[base].active) {
+                    st.errors << QString("[%1] constraint %2 == NULL невозможно").arg(lineNo).arg(expr);
                 } else {
-                    // это обычная переменная; пусть обработает reIfEqNull
+                    // поле указывает на NULL
+                    st.mem[base].fields[lastField] = 0;
+                    mirrorFieldWriteToSolution(st, base, lastField, 0);
                 }
                 st.constraints << QString("[%1] %2 == NULL").arg(lineNo).arg(expr);
                 continue;
             }
-            if (auto m = reIfChainNeNull.match(line); m.hasMatch()) {
-                const QString expr = m.captured(1).trimmed();
-                QStringList chain = parseChainExpr(expr);
-                if (chain.size() >= 2) {
-                    const QString lastField = chain.takeLast();
-                    const int base = useChain(st, chain,
-                                              /*createIfClassI*/true,
-                                              /*createBaseIfMissing*/true,
-                                              /*markNonNull*/true);
-                    if (base==0 || !st.mem.contains(base) || !st.mem[base].active) {
-                        st.errors << QString("[%1] constraint %2 != NULL невозможно").arg(lineNo).arg(expr);
-                    } else {
-                        int cur = st.mem[base].fields.value(lastField, 0);
-                        if (cur == 0) {
-                            // если поле не задано или было приравнено к NULL — нужно создать non-NULL адрес
-                            int child = 0;
-                            if (st.mem[base].classI) {
-                                child = ensureField(st, base, lastField, /*nextIsClassI*/true);
-                            } else {
-                                // для class II допустимо создать новый heap-узел (class II)
-                                child = createCell(st, /*classI*/false);
-                            }
-                            if (child==0) {
-                                st.errors << QString("[%1] %2 != NULL: не удалось создать адрес").arg(lineNo).arg(expr);
-                            } else {
-                                st.mem[base].fields[lastField] = child;
-                                mirrorFieldWriteToSolution(st, base, lastField, child);
-                                setNullFlag(st, child, 2);
-                            }
-                        } else {
-                            setNullFlag(st, cur, 2);
-                        }
-                    }
+            // иначе это обычная переменная; пусть обработает reIfEqNull
+        }
+
+        if (auto m = reIfChainNeNull.match(line); m.hasMatch()) {
+            const QString expr = m.captured(1).trimmed();
+            QStringList chain = parseChainExpr(expr);
+            if (chain.size() >= 2) {
+                const QString lastField = chain.takeLast();
+                const int base = useChain(st, chain,
+                                          /*createIfClassI*/ true,
+                                          /*createBaseIfMissing*/ true,
+                                          /*markNonNull*/ true);
+                if (base == 0 || !st.mem.contains(base) || !st.mem[base].active) {
+                    st.errors << QString("[%1] constraint %2 != NULL невозможно").arg(lineNo).arg(expr);
                 } else {
-                    // это обычная переменная; пусть обработает reIfNeNull
+                    int cur = st.mem[base].fields.value(lastField, 0);
+                    if (cur == 0) {
+                        // если поле не задано или было приравнено к NULL — нужно создать non-NULL адрес
+                        int child = 0;
+                        if (st.mem[base].classI) {
+                            child = ensureField(st, base, lastField, /*nextIsClassI*/ true);
+                        } else {
+                            // для class II допустимо создать новый heap-узел (class II)
+                            child = createCell(st, /*classI*/ false);
+                        }
+
+                        if (child == 0) {
+                            st.errors << QString("[%1] %2 != NULL: не удалось создать адрес").arg(lineNo).arg(expr);
+                        } else {
+                            st.mem[base].fields[lastField] = child;
+                            mirrorFieldWriteToSolution(st, base, lastField, child);
+                            setNullFlag(st, child, 2);
+                        }
+                    } else {
+                        setNullFlag(st, cur, 2);
+                    }
                 }
                 st.constraints << QString("[%1] %2 != NULL").arg(lineNo).arg(expr);
                 continue;
             }
+            // иначе это обычная переменная; пусть обработает reIfNeNull
+        }
 
+        // if (x == NULL) / if (x != NULL) — свойства null (CONSTRAINTS)
+        if (auto m = reIfEqNull.match(line); m.hasMatch()) {
+            const QString var = m.captured(1);
+            int a = st.env.value(var, 0);
+            if (a != 0) setNullFlag(st, a, 1);
+            st.constraints << QString("[%1] %2 == NULL").arg(lineNo).arg(var);
+            continue;
+        }
+
+        if (auto m = reIfNeNull.match(line); m.hasMatch()) {
+            const QString var = m.captured(1);
+            int a = st.env.value(var, 0);
+            if (a == 0) {
+                st.errors << QString("[%1] %2 != NULL, но %2 уже NULL").arg(lineNo).arg(var);
+            } else {
+                setNullFlag(st, a, 2);
+            }
+            st.constraints << QString("[%1] %2 != NULL").arg(lineNo).arg(var);
             continue;
         }
 
@@ -712,12 +815,58 @@ QString AddrMapPlugin::analyze(const QString& code) const {
             continue;
         }
 
-        // x = y->f;  (1 уровень; для >1 уровня можно расширить аналогично через parseChainExpr)
-        if (auto m = reAssignFieldGet1.match(line); m.hasMatch()) {
-            const QString x = m.captured(1), y = m.captured(2), f = m.captured(3);
-            int to = useChain(st, QStringList{y, f});
-            if (to==0) st.errors << QString("[%1] разыменование %2->%3 невозможно").arg(lineNo).arg(y, f);
-            st.env[x] = to;
+        // x = y->f;  x = y->f->g;  ... (чтение значения цепочки)
+        if (auto m = reAssignChainGet.match(line); m.hasMatch()) {
+            const QString x = m.captured(1);
+            const QString rhsExpr = m.captured(2);
+
+            const auto rhs = evalChainValue(st, parseChainExpr(rhsExpr),
+                                            /*createIfClassI*/ true,
+                                            /*createBaseIfMissing*/ true,
+                                            /*markNonNull*/ true);
+            if (!rhs.ok) {
+                st.errors << QString("[%1] разыменование %2 невозможно").arg(lineNo).arg(rhsExpr);
+                continue;
+            }
+
+            const int lhsAddr = st.env.value(x, 0);
+            if (lhsAddr != 0 && rhs.value != 0 &&
+                st.mem.contains(lhsAddr) && st.mem[lhsAddr].unequal.contains(rhs.value)) {
+                st.errors << QString("[%1] %2 := %3 против Ax!=Ay").arg(lineNo).arg(x, rhsExpr);
+            }
+
+            st.env[x] = rhs.value; // может быть 0 (NULL)
+            continue;
+        }
+
+        // y->f = x->g->h;  (присваивание из цепочки)
+        if (auto m = reFieldAssignChain.match(line); m.hasMatch()) {
+            const QString y = m.captured(1), f = m.captured(2);
+            const QString rhsExpr = m.captured(3);
+
+            const int base = useChain(st, QStringList{y});
+            if (base == 0 || !st.mem.contains(base) || !st.mem[base].active) {
+                st.errors << QString("[%1] base %2 недоступен для присваивания").arg(lineNo).arg(y);
+                continue;
+            }
+
+            const auto rhs = evalChainValue(st, parseChainExpr(rhsExpr),
+                                            /*createIfClassI*/ true,
+                                            /*createBaseIfMissing*/ true,
+                                            /*markNonNull*/ true);
+            if (!rhs.ok) {
+                st.errors << QString("[%1] RHS %2 недоступен").arg(lineNo).arg(rhsExpr);
+                continue;
+            }
+
+            const int prev = st.mem[base].fields.value(f, 0);
+            if (prev != 0 && rhs.value != 0 &&
+                st.mem.contains(prev) && st.mem[prev].unequal.contains(rhs.value)) {
+                st.errors << QString("[%1] %2->%3 := %4 против Ax!=Ay").arg(lineNo).arg(y, f, rhsExpr);
+            }
+
+            st.mem[base].fields[f] = rhs.value;
+            mirrorFieldWriteToSolution(st, base, f, rhs.value);
             continue;
         }
 
@@ -747,16 +896,11 @@ QString AddrMapPlugin::analyze(const QString& code) const {
                     st.errors << QString("[%1] RHS %2 == NULL?").arg(lineNo).arg(z);
             }
 
-            // 3) если поле ещё не создано, а база — class I -> создаём child class I
-            if (!st.mem[base].fields.contains(f) && st.mem[base].classI) {
-                (void)ensureField(st, base, f, /*nextIsClassI*/true);
-            }
-
             // 4) проверка неравенства
             int prev = st.mem[base].fields.value(f, 0);
             if (prev!=0 && target!=0 &&
                 st.mem.contains(prev) && st.mem[prev].unequal.contains(target)) {
-                st.errors << QString("[%1] %2->%3 := a%4 против p!=q")
+                st.errors << QString("[%1] %2->%3 := a%4 против Ax!=Ay")
                                  .arg(lineNo).arg(y, f).arg(target);
             }
 
@@ -774,7 +918,7 @@ QString AddrMapPlugin::analyze(const QString& code) const {
                 int lhs = st.env.value(x, 0); // не создаём до присваивания
                 if (lhs!=0 && rhs!=0 &&
                     st.mem.contains(lhs) && st.mem[lhs].unequal.contains(rhs)) {
-                    st.errors << QString("[%1] %2 := %3 против p!=q").arg(lineNo).arg(x, y);
+                    st.errors << QString("[%1] %2 := %3 против Ax!=Ay").arg(lineNo).arg(x, y);
                 }
                 st.env[x] = rhs;
             }

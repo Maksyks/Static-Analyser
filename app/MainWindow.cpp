@@ -38,10 +38,11 @@ static QVariantMap collectParams(const CommandDescriptor& c,
                                        ).trimmed();
             if (!ok || (!p.optional && picked.isEmpty()))
                 return {}; // отмена/пусто — прервать команду
-            if (!picked.isEmpty())
+            if (!picked.isEmpty()) {
                 qDebug() << p.key;
                 qDebug() << picked;
                 out.insert(p.key, picked);
+            }
             break;
         }
         case ParamSpec::Text: {

@@ -59,6 +59,19 @@ private:
     // Просмотр цепочки БЕЗ модификаций и без автосоздания (для CONSTRAINTS)
     int  peekChain(const State& st, const QStringList& chain) const;
 
+    struct ChainValue {
+        bool ok = false;
+        int value = 0; // 0 == NULL
+    };
+
+    // Получить значение выражения-цепочки. В отличие от useChain(),
+    // допускает NULL (0) как корректный результат на последнем шаге.
+    // Если ok=false — разыменование по пути невозможно (NULL/освобождённый узел/класс II без присваивания и т.п.).
+    ChainValue evalChainValue(State& st, const QStringList& chain,
+                              bool createIfClassI=true,
+                              bool createBaseIfMissing=true,
+                              bool markNonNull=true) const;
+
     // === χ ← ψ синхронизация для class I ===
     void mirrorFieldWriteToSolution(State& st, int baseAddr, const QString& field, int targetAddr) const; // NEW
     void mirrorEnsureChildInSolution(State& st, int parentAddr, const QString& field, int childAddr) const; // NEW
