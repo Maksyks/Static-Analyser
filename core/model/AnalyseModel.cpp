@@ -1,5 +1,5 @@
 // core/model/SliceModel.cpp
-#include "core/model/SliceModel.h"
+#include "core/model/AnalyseModel.h"
 #include <QMetaType>
 #include <QVariant>
 

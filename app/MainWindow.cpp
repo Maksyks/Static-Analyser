@@ -13,7 +13,7 @@
 #include <QLineEdit>
 #include <climits>
 #include <qDebug>
-#include "core/model/SliceResult.h"
+#include "core/model/AnalyseResult.h"
 
 static QVariantMap collectParams(const CommandDescriptor& c,
                                  const EditorContext& ctx,

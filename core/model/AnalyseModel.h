@@ -1,6 +1,6 @@
 #pragma once
 #include <QObject>
-#include "core/model/SliceResult.h"
+#include "core/model/AnalyseResult.h"
 #include "core/events/AnalysisTypes.h"
 
 class SliceModel : public QObject {

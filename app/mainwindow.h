@@ -2,10 +2,10 @@
 #include <QMainWindow>
 #include "core/events/DomainEventBus.h"
 #include "core/commands/CommandRegistry.h"
-#include "core/model/SliceModel.h"
+#include "core/model/AnalyseModel.h"
 #include "core/run/PluginRunner.h"
 #include "core/plugins/IPlugin.h"
-#include "core/viewers/SliceResultViewer.h"
+#include "core/viewers/ResultViewer.h"
 #include "app/CodeEditor.h"
 
 class IDE : public QMainWindow {

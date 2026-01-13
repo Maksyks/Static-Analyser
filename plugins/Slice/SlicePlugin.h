@@ -3,7 +3,7 @@
 #include <QObject>
 #include <QTemporaryDir>
 #include "plugins/IPlugin.h"
-#include "model/SliceResult.h"
+#include "model/AnalyseResult.h"
 
 class SlicePlugin : public QObject, public IPlugin {
     Q_OBJECT

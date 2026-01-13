@@ -1,6 +1,6 @@
 #pragma once
 #include <QTabWidget>
-#include "core/model/SliceResult.h"
+#include "core/model/AnalyseResult.h"
 
 class SliceModel;
 class CodeEditor; // forward

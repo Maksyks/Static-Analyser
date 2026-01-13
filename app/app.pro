@@ -11,17 +11,20 @@ INCLUDEPATH += $$PWD/.. \
                $$PWD/../core/viewers
 
 SOURCES += \
+    ../core/model/AnalyseModel.cpp \
+    ../core/viewers/ResultViewer.cpp \
     main.cpp \
     MainWindow.cpp \
     CodeEditor.cpp \
     CHighlighter.cpp \
     ../core/commands/CommandRegistry.cpp \
     ../core/run/PluginRunner.cpp \
-    ../core/model/SliceModel.cpp \
-    ../core/viewers/SliceResultViewer.cpp \
     ../core/viewers/GraphTab.cpp
 
 HEADERS += \
+    ../core/model/AnalyseModel.h \
+    ../core/model/AnalyseResult.h \
+    ../core/viewers/ResultViewer.h \
     MainWindow.h \
     CodeEditor.h \
     CHighlighter.h \
@@ -32,10 +35,7 @@ HEADERS += \
     ../core/plugins/CommandDescriptor.h \
     ../core/commands/CommandRegistry.h \
     ../core/run/PluginRunner.h \
-    ../core/model/SliceResult.h \
-    ../core/model/SliceModel.h \
     ../core/viewers/IResultViewerFactory.h \
-    ../core/viewers/SliceResultViewer.h \
     ../core/viewers/GraphTab.h
 
 RESOURCES += resources.qrc

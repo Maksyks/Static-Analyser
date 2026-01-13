@@ -5,8 +5,20 @@ TARGET   = AddrMapPlugin
 
 INCLUDEPATH += $$PWD/../../core $$PWD/../../
 
-SOURCES += AddrMapPlugin.cpp
-HEADERS += AddrMapPlugin.h
+SOURCES += \
+    AddrMapPlugin.cpp \
+    AddrMapAnalyzer.cpp \
+    AddrMapMemory.cpp \
+    AddrMapReport.cpp \
+    AddrMapUtils.cpp
+
+HEADERS += \
+    AddrMapPlugin.h \
+    AddrMapAnalyzer.h \
+    AddrMapMemory.h \
+    AddrMapReport.h \
+    AddrMapTypes.h \
+    AddrMapUtils.h
 DISTFILES += AddrMapPlugin.json
 
 CONFIG(debug, debug|release) {

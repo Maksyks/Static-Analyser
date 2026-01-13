@@ -1,6 +1,6 @@
 // core/viewers/SliceResultViewer.cpp
-#include "core/viewers/SliceResultViewer.h"
-#include "core/model/SliceModel.h"
+#include "core/viewers/ResultViewer.h"
+#include "core/model/AnalyseModel.h"
 #include "../../app/CodeEditor.h"
 #include "GraphTab.h"
 
