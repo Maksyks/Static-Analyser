@@ -1,0 +1,20 @@
+== AddressMapper report ==
+Status: VALID
+
+[g] Environment (var -> addr)
+  root -> a1
+  x -> a2
+  y -> a3
+
+[j] Memory (addr: {field->addr} | class active null | unequal)
+  a1: {rt->a3} | class=I active=1 null=2 unequal={}
+  a2: {lt->a3} | class=I active=1 null=2 unequal={}
+  a3: {} | class=I active=1 null=0 unequal={}
+
+[c] Solution (class I only, shadow of ψ)
+  a1: {rt->a3}
+  a2: {lt->a3}
+  a3: {}
+
+[constraints]
+  [5] x != NULL

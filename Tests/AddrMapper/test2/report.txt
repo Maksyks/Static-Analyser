@@ -1,0 +1,28 @@
+== AddressMapper report ==
+Status: INVALID
+  error: Противоречивое ограничение NULL по адресу a1
+
+[g] Environment (var -> addr)
+  p -> a1
+  q -> a5
+  x -> a3
+
+[j] Memory (addr: {field->addr} | class active null | unequal)
+  a1: {next->a2} | class=I active=1 null=2 unequal={}
+  a2: {} | class=I active=1 null=2 unequal={}
+  a3: {next->a4} | class=I active=1 null=2 unequal={}
+  a4: {next->a5} | class=I active=1 null=2 unequal={}
+  a5: {} | class=I active=1 null=0 unequal={}
+
+[c] Solution (class I only, shadow of ψ)
+  a1: {next->a2}
+  a2: {}
+  a3: {next->a4}
+  a4: {next->a5}
+  a5: {}
+
+[constraints]
+  [3] q = NULL
+  [4] x = NULL
+  [5] p ->next != NULL
+  [6] p == NULL

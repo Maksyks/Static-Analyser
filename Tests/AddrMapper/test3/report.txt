@@ -1,0 +1,30 @@
+== AddressMapper report ==
+Status: INVALID
+  error: Противоречивое ограничение NULL по адресу a3
+  error: [14] RHS c->next недоступен
+
+[g] Environment (var -> addr)
+  a -> a1
+  b -> a2
+  c -> a3
+  d -> a4
+  head -> a1
+
+[j] Memory (addr: {field->addr} | class active null | unequal)
+  a1: {next->a2, other->a2} | class=I active=1 null=2 unequal={}
+  a2: {next->a4, other->a3} | class=I active=1 null=2 unequal={}
+  a3: {} | class=I active=1 null=1 unequal={}
+  a4: {} | class=I active=1 null=0 unequal={}
+
+[c] Solution (class I only, shadow of ψ)
+  a1: {next->a2, other->a2}
+  a2: {next->a4, other->a3}
+  a3: {}
+  a4: {}
+
+[constraints]
+  [8] a != NULL
+  [10] b != NULL
+  [12] c == NULL
+  [15] a->other != NULL
+  [16] a->other->next == NULL

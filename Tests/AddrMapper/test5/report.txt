@@ -1,0 +1,25 @@
+== AddressMapper report ==
+Status: INVALID
+  error: [5] alias(x := y) противоречит неравенству
+  error: [10] x->next != y: противоречие, требуется a2 != a2
+
+[g] Environment (var -> addr)
+  r -> a2
+  x -> a2
+  y -> a2
+
+[j] Memory (addr: {field->addr} | class active null | unequal)
+  a1: {} | class=I active=1 null=0 unequal={a2}
+  a2: {next->a2, other->NULL} | class=I active=1 null=2 unequal={a1}
+
+[c] Solution (class I only, shadow of ψ)
+  a1: {}
+  a2: {next->a2, other->NULL}
+
+[constraints]
+  [4] x != y
+  [5] alias(x := y) [preprocess]
+  [5] x == y
+  [6] x != NULL
+  [9] r != NULL
+  [10] x->next != y

@@ -1,0 +1,27 @@
+== AddressMapper report ==
+Status: VALID
+
+[g] Environment (var -> addr)
+  a -> a1
+  b -> a2
+  p -> a1
+  q -> a2
+  t -> a2
+  u -> a1
+
+[j] Memory (addr: {field->addr} | class active null | unequal)
+  a1: {next->a2, other->a1} | class=I active=1 null=2 unequal={a2}
+  a2: {next->a1, other->a1} | class=I active=1 null=2 unequal={a1}
+
+[c] Solution (class I only, shadow of ψ)
+  a1: {next->a2, other->a1}
+  a2: {next->a1, other->a1}
+
+[constraints]
+  [9] a != NULL
+  [15] alias(a->next := b) [preprocess]
+  [12] b != NULL
+  [15] a->next == b
+  [18] alias(u := a) [preprocess]
+  [18] u == a
+  [19] a->next != b->next

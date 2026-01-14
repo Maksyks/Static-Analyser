@@ -14,10 +14,9 @@ QString trimComment(const QString& s) {
 }
 
 QString norm(const QString& s) {
-    QString out = s;
-    out.replace(QRegularExpression(QStringLiteral(R"(\s+)")), QStringLiteral(""));
-    return out;
+    return s.trimmed();
 }
+
 
 bool isNullLike(const QString& s) {
     const QString t = s.trimmed();
