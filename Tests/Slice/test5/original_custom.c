@@ -1,12 +1,12 @@
-void step_add(int *p, int x) {
-    if (!p) return;
-    *p += x;                 
-void step_xor(int *p, int mask) {
-    if (!p) return;
-    *p ^= mask;              
+int** create_matrix(int rows, int cols) {
+    int **m = malloc(rows * sizeof(int*)); 
+    for (int i = 0; i < rows; ++i) {
+        m[i] = malloc(cols * sizeof(int));
+    return m;
+void init_matrix(int **m, int rows, int cols) {
+    for (int i = 0; i < rows; ++i) {
+        int *row = m[i]; 
 int main(void) {
-    int *ptr = (int*)malloc(sizeof *ptr);
-    if (!ptr) {
-    *ptr = 7;
-    step_add(ptr, 5);
-    step_xor(ptr, 0x55);
+    int n = 4;
+    int **mat = create_matrix(n, n);
+    init_matrix(mat, n, n);
