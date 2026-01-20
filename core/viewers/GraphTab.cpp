@@ -54,5 +54,5 @@ void GraphTab::setDot(const QString& dot) {
     emit bridge_->render(dot);
 }
 
-// ВАЖНО: подключаем moc для класса, объявленного В ЭТОМ .cpp
+//подключаем moc для класса, объявленного В ЭТОМ .cpp
 #include "GraphTab.moc"

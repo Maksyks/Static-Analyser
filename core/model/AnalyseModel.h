@@ -3,18 +3,18 @@
 #include "core/model/AnalyseResult.h"
 #include "core/events/AnalysisTypes.h"
 
-class SliceModel : public QObject {
+class AnalyseModel : public QObject {
     Q_OBJECT
 public:
-    explicit SliceModel(QObject* parent=nullptr);
-    const SliceResult& state() const;
+    explicit AnalyseModel(QObject* parent=nullptr);
+    const AnalyseResult& state() const;
 
 public slots:
     void apply(const AnalysisResultEnvelope& env);
 
 signals:
-    void changed(const SliceResult& s);
+    void changed(const AnalyseResult& s);
 
 private:
-    SliceResult s_;
+    AnalyseResult s_; //composition
 };

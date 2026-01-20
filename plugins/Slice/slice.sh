@@ -20,10 +20,10 @@ SLICE_BC="$TMP/slice.bc"
 VISIBLE_TMP="$TMP/slice_visible.c"
 LLVMC_TMP="$TMP/slice_llvm2c.c"
 
-# ==== 1) .c -> .bc (с дебаг-метой) ====
+#  1) .c -> .bc (с дебаг-метой)
 clang -g -O0 -emit-llvm -c "$SRC" -o "$INPUT_BC"
 
-# ==== 2) Срез ====
+#  2) Срез
 SLICER="/mnt/c/Diplom_project/Static_analyser/symbiotic/sbt-slicer/build-10.0.0/src/sbt-slicer"
 
 set +e
@@ -42,8 +42,8 @@ if [[ $SLICER_RC -ne 0 ]]; then
   fi
 fi
 
-# ==== 2.5) Генерация CFG .dot ====
-# ВАЖНО: запускаем opt внутри $TMP, чтобы .dot-файлы оказались там же
+# 2.5) Генерация CFG .dot
+# запускаем opt внутри $TMP, чтобы .dot-файлы оказались там же
 pushd "$TMP" >/dev/null
 # Не даём ошибкам убить скрипт (из-за set -e/pipefail):
 opt -dot-cfg "$SLICE_BC" -disable-output -o /dev/null 2>/dev/null || true
@@ -70,7 +70,7 @@ emit_dot_cfg() {
 DOT_CFG="$(emit_dot_cfg)"
 
 
-# ==== 3) Собираем список уникальных исходных строк из slice.bc (по !DILocation) ====
+# 3) Собираем список уникальных исходных строк из slice.bc (по !DILocation)
 mapfile -t LINES < <(
   llvm-dis -o - "$SLICE_BC" \
   | grep -oP '!DILocation\(\s*line:\s*\K\d+' \
@@ -90,7 +90,7 @@ if ((${#FUN_LINES[@]} > 0)); then
   mapfile -t LINES < <(printf '%s\n' "${LINES[@]}" | sort -n | uniq)
 fi
 
-# ==== 4) Формируем «видимые» строки и JSON-карту ====
+# 4) Формируем «видимые» строки и JSON-карту
 : > "$VISIBLE_TMP"
 SRC_BASENAME="$(basename -- "$SRC")"
 
@@ -106,7 +106,7 @@ done
 LINE_MAP_JSON="${LINE_MAP_JSON%,}"
 LINE_MAP_JSON+='}}'
 
-# ==== 5) Полная декомпиляция llvm2c (оставляем, это не DOT) ====
+#  5) Полная декомпиляция llvm2c (оставляем, это не DOT)
 LLVMC="/mnt/c/Diplom_project/Static_analyser/symbiotic/llvm2c/build-10.0.0/llvm2c"
 if ! "$LLVMC" "$SLICE_BC" -o "$LLVMC_TMP"; then
   : > "$LLVMC_TMP"   # если llvm2c упал — отдаём пустой блок, но не ломаемся
@@ -125,7 +125,7 @@ emit_dot_visible() {
 DOT_VISIBLE="$(emit_dot_visible)"
 
 
-# ==== 6) Отдаём бандл в stdout ====
+#  6) Отдаём бандл в stdout
 printf "/*__BEGIN_ORIGINAL_CUSTOM__*/"
 cat "$VISIBLE_TMP"
 echo "/*__END_ORIGINAL_CUSTOM__*/"

@@ -1,11 +1,10 @@
-// core/model/SliceResult.h
 #pragma once
 #include <QString>
 #include <QMap>
 #include <QPair>
 #include <QMetaType>
 
-struct SliceResult {
+struct AnalyseResult {
     QString custom;      // видимые строки исходника (срез)
     QString llvm2c;      // декомпилят
     QString dotVisible;  // DOT-граф «видимых строк»
@@ -13,4 +12,4 @@ struct SliceResult {
     QMap<int, QPair<QString,int>> lineMap; // outLine -> {file, srcLine}
     QString addrmap;
 };
-Q_DECLARE_METATYPE(SliceResult)
+Q_DECLARE_METATYPE(AnalyseResult)

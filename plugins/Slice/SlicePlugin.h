@@ -19,5 +19,5 @@ public:
     // }
     QVariant runAnalysis(QString kind, const EditorContext& ctx, const QVariantMap& params) override;
 private:
-    SliceResult runSlice(const QString& input, const QString& criterion) const;
+    AnalyseResult runSlice(const QString& input, const QString& criterion) const;
 };

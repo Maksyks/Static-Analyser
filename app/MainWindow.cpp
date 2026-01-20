@@ -88,7 +88,7 @@ IDE::IDE(QWidget *parent) : QMainWindow(parent)
     QWidget *central = new QWidget(this);
     auto *lay = new QHBoxLayout(central);
     leftEditor = new CodeEditor;
-    rightTabs  = new SliceResultViewer;
+    rightTabs  = new ResultViewer;
     lay->addWidget(leftEditor);
     lay->addWidget(rightTabs);
     setCentralWidget(central);
@@ -101,11 +101,11 @@ IDE::IDE(QWidget *parent) : QMainWindow(parent)
     // Ядро
     bus        = new DomainEventBus(this);
     cmdReg     = new CommandRegistry(this);
-    sliceModel = new SliceModel(this);
-    rightTabs->bind(sliceModel);//подписка табов на эмит от плагина
-    connect(rightTabs, &SliceResultViewer::lineActivated,
+    analyseModel = new AnalyseModel(this);
+    rightTabs->bind(analyseModel);//подписка табов на эмит от плагина
+    connect(rightTabs, &ResultViewer::lineActivated,
             this,      &IDE::onRightLineActivated);
-    connect(bus, &DomainEventBus::analysisCompleted, sliceModel, &SliceModel::apply);
+    connect(bus, &DomainEventBus::analysisCompleted, analyseModel, &AnalyseModel::apply);
 
     connect(bus, &DomainEventBus::analysisCompleted,
             this,
@@ -113,8 +113,8 @@ IDE::IDE(QWidget *parent) : QMainWindow(parent)
                 if (env.kind != QLatin1String("slice.v1")) return;
 
                 // Извлекаем текст среза (original_custom) и запускаем addrmap
-                if (!env.payload.canConvert<SliceResult>()) return;
-                const SliceResult sr = env.payload.value<SliceResult>();
+                if (!env.payload.canConvert<AnalyseResult>()) return;
+                const AnalyseResult sr = env.payload.value<AnalyseResult>();
 
                 EditorContext postCtx = ctx;
                 postCtx.documentText = sr.custom; // раздаём плагинам именно текст original_custom
@@ -188,7 +188,7 @@ void IDE::openSourceFile() {
 }
 
 void IDE::onRightLineActivated(int outLine1) {
-    const auto& lm = sliceModel->state().lineMap;
+    const auto& lm = analyseModel->state().lineMap;
     if (!lm.contains(outLine1)) return;
     int srcLine = lm[outLine1].second;
     if (srcLine > 0) leftEditor->highlightLine(srcLine - 1);

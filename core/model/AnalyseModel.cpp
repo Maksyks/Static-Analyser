@@ -1,18 +1,17 @@
-// core/model/SliceModel.cpp
 #include "core/model/AnalyseModel.h"
 #include <QMetaType>
 #include <QVariant>
 
-SliceModel::SliceModel(QObject* parent) : QObject(parent) {
-    qRegisterMetaType<SliceResult>("SliceResult");
+AnalyseModel::AnalyseModel(QObject* parent) : QObject(parent) {
+    qRegisterMetaType<AnalyseResult>("AnalyseResult");
 }
 
-const SliceResult& SliceModel::state() const { return s_; }
+const AnalyseResult& AnalyseModel::state() const { return s_; }
 
-void SliceModel::apply(const AnalysisResultEnvelope& env) {
+void AnalyseModel::apply(const AnalysisResultEnvelope& env) {
     if (env.kind == QLatin1String("slice.v1")) {
-        if (!env.payload.canConvert<SliceResult>()) return;
-        s_ = env.payload.value<SliceResult>();
+        if (!env.payload.canConvert<AnalyseResult>()) return;
+        s_ = env.payload.value<AnalyseResult>();
         emit changed(s_);
         return;
     }

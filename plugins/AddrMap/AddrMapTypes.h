@@ -13,7 +13,7 @@ struct Cell {
     bool classI = false;  // class I (input/reserved) vs class II (heap)
     bool active = true;   // still allocated
     int nullFlag = 0;     // 0 unknown, 1 NULL, 2 non-NULL
-    QSet<int> unequal;    // set of addresses known to be != this one
+    QSet<int> unequal;    // набор неравных друг другу адресов
     QMap<QString, int> fields; // field -> addr (0 == NULL)
 };
 

@@ -1,10 +1,10 @@
-// core/viewers/SliceResultViewer.cpp
+// core/viewers/ResultViewer.cpp
 #include "core/viewers/ResultViewer.h"
 #include "core/model/AnalyseModel.h"
 #include "../../app/CodeEditor.h"
 #include "GraphTab.h"
 
-SliceResultViewer::SliceResultViewer(QWidget* parent)
+ResultViewer::ResultViewer(QWidget* parent)
     : QTabWidget(parent)
 {
     tabCustom_  = new CodeEditor(this); tabCustom_->setReadOnly(true);
@@ -17,15 +17,15 @@ SliceResultViewer::SliceResultViewer(QWidget* parent)
     addTab(tabGraph_,   tr("graph"));
     addTab(tabAddrMap_, tr("addrmap"));
 
-    connect(tabGraph_,  &GraphTab::lineActivated, this, &SliceResultViewer::lineActivated);
-    connect(tabCustom_, &CodeEditor::lineActivated, this, &SliceResultViewer::lineActivated);
+    connect(tabGraph_,  &GraphTab::lineActivated, this, &ResultViewer::lineActivated);
+    connect(tabCustom_, &CodeEditor::lineActivated, this, &ResultViewer::lineActivated);
 }
 
-void SliceResultViewer::bind(SliceModel* model) {
-    connect(model, &SliceModel::changed, this, &SliceResultViewer::onChanged);
+void ResultViewer::bind(AnalyseModel* model) {
+    connect(model, &AnalyseModel::changed, this, &ResultViewer::onChanged);
 }
 
-void SliceResultViewer::onChanged(const SliceResult& s) {
+void ResultViewer::onChanged(const AnalyseResult& s) {
     tabCustom_->setPlainText(s.custom);
     tabLlvm_->setPlainText(s.llvm2c);
     tabAddrMap_->setPlainText(s.addrmap);

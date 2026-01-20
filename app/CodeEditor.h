@@ -20,7 +20,6 @@ public:
     void clearLineHighlight();
 
 signals:
-    // IDE/плагины могут дополнять меню на основе контекста
     void contextActionsRequested(const EditorContext& ctx, QMenu* menu);
     void lineActivated(int line1based);
 

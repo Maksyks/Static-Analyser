@@ -15,7 +15,7 @@ namespace addrmap {
 QString AddrMapAnalyzer::analyze(const QString& code) const {
     State st;
 
-    // === Regex набор (простой парсер по строкам) ===
+    //Regex набор (простой парсер по строкам)
     const QRegularExpression reDeclPtr(R"(^\s*\w+\s*\*\s*([A-Za-z_]\w*)\s*;)");
     // Pointer declaration with initializer: T* x = y;
     // (needed for: Node *p = head;)
@@ -36,10 +36,10 @@ QString AddrMapAnalyzer::analyze(const QString& code) const {
 
     const QRegularExpression reAssignChainGet(R"(^\s*([A-Za-z_]\w*)\s*=\s*([A-Za-z_]\w*(?:\s*->\s*[A-Za-z_]\w*)+)\s*;)");
 
-    // stop analysis when main() definition starts
+    // провести анализ до main()
     const QRegularExpression reMainDecl(R"(^\s*(?:(?:static|extern)\s+)?(?:[A-Za-z_]\w*\s+)*main\s*\()");
 
-    // general chain equality/inequality: e.g. if (x == q->right->left)
+    // if (x == q->right->left)
     const QRegularExpression reIfEqAny(R"(^\s*if\s*\(\s*([A-Za-z_]\w*(?:\s*->\s*[A-Za-z_]\w*)*)\s*==\s*([A-Za-z_]\w*(?:\s*->\s*[A-Za-z_]\w*)*)\s*\))");
     const QRegularExpression reIfNeAny(R"(^\s*if\s*\(\s*([A-Za-z_]\w*(?:\s*->\s*[A-Za-z_]\w*)*)\s*!=\s*([A-Za-z_]\w*(?:\s*->\s*[A-Za-z_]\w*)*)\s*\))");
 
@@ -391,7 +391,7 @@ QString AddrMapAnalyzer::analyze(const QString& code) const {
         if (line.isEmpty())
             continue;
 
-        // === САМИ ОПЕРАЦИИ ===
+        // САМИ ОПЕРАЦИИ
 
         // T* x = y;
         if (auto m = reDeclInitAlias.match(line); m.hasMatch()) {
@@ -414,7 +414,7 @@ QString AddrMapAnalyzer::analyze(const QString& code) const {
             continue;
         }
 
-        // объявление указателя: T* x;  — no-op (как в статье)
+        // объявление указателя: T* x;
         if (auto m = reDeclPtr.match(line); m.hasMatch()) {
             (void)m;
             continue;

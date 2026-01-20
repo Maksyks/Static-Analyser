@@ -2,18 +2,18 @@
 #include <QTabWidget>
 #include "core/model/AnalyseResult.h"
 
-class SliceModel;
-class CodeEditor; // forward
+class AnalyseModel;
+class CodeEditor; // предварительное объявление типа для private
 
-class SliceResultViewer : public QTabWidget {
+class ResultViewer : public QTabWidget {
     Q_OBJECT
 public:
-    explicit SliceResultViewer(QWidget* parent=nullptr);
-    void bind(SliceModel* model);
+    explicit ResultViewer(QWidget* parent=nullptr);
+    void bind(AnalyseModel* model);
 signals:
-    void lineActivated(int line1based);   // проброс клика из вложенного редактора
+    void lineActivated(int line1based);
 private slots:
-    void onChanged(const SliceResult& s);
+    void onChanged(const AnalyseResult& s);
 
 private:
     CodeEditor* tabCustom_ = nullptr;

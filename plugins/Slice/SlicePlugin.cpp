@@ -30,7 +30,7 @@ QVariant SlicePlugin::runAnalysis(QString kind, const EditorContext& ctx, const 
     if (criterion.isEmpty())
         throw std::runtime_error("Empty slice criterion (need 'line:var' or 'func:line:var').");
 
-    SliceResult r = runSlice(ctx.documentText, criterion);
+    AnalyseResult r = runSlice(ctx.documentText, criterion);
     return QVariant::fromValue(r);
 }
 
@@ -48,7 +48,7 @@ QList<CommandDescriptor> SlicePlugin::commands() const {
     return { d };
 }
 
-SliceResult SlicePlugin::runSlice(const QString& input, const QString& criterion) const {
+AnalyseResult SlicePlugin::runSlice(const QString& input, const QString& criterion) const {
     QTemporaryDir tmpd;
     QFile outF(tmpd.path()+"/input.c"); outF.open(QIODevice::WriteOnly|QIODevice::Text);
     QTextStream ts(&outF); ts << input; outF.close();
@@ -83,7 +83,6 @@ SliceResult SlicePlugin::runSlice(const QString& input, const QString& criterion
         throw std::runtime_error("Не удалось запустить WSL");
     }
 
-    // дайте больше времени; можно 5–10 минут, или безлимит:
     if (!proc.waitForFinished(10 * 60 * 1000)) {
         proc.kill();
         qCritical() << "slice.sh timeout; output so far:\n" << proc.readAll();
@@ -105,7 +104,7 @@ SliceResult SlicePlugin::runSlice(const QString& input, const QString& criterion
         return s.mid(i, j - i);
     };
 
-    SliceResult r;
+    AnalyseResult r;
     r.custom     = between(bundle, "/*__BEGIN_ORIGINAL_CUSTOM__*/", "/*__END_ORIGINAL_CUSTOM__*/");
     r.llvm2c     = between(bundle, "/*__BEGIN_LLVM2C__*/",          "/*__END_LLVM2C__*/");
     r.dotVisible = between(bundle, "/*__BEGIN_DOT_VISIBLE__*/",     "/*__END_DOT_VISIBLE__*/");

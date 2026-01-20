@@ -19,12 +19,12 @@ private slots:
 
 private:
     CodeEditor*           leftEditor  = nullptr;
-    SliceResultViewer*    rightTabs   = nullptr;
+    ResultViewer*         rightTabs   = nullptr;
     QMenu*                fileMenu    = nullptr;
     QMenu*                pluginsMenu = nullptr;
 
     DomainEventBus*       bus        = nullptr;
     CommandRegistry*      cmdReg     = nullptr;
-    SliceModel*           sliceModel = nullptr;
+    AnalyseModel*         analyseModel = nullptr;
     PluginRunner*         runner     = nullptr;
 };

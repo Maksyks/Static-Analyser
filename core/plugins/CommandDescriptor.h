@@ -16,7 +16,7 @@ struct ParamSpec {
 struct CommandDescriptor {
     QString id;           // "slice.run"
     QString title;        // "Сделать срез…"
-    QString menuPath;     // "Editor/Context/Slice"
+    QString menuPath;     // "Editor/Context/"
     QString shortcut;     // "Ctrl+Alt+S"
     QString when;         // условие видимости (expr на EditorContext) — можно оставить пустым
     QString kind;         // какой анализ запустить ("slice.v1")
